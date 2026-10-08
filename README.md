@@ -28,10 +28,9 @@ Sou um desenvolvedor focado em criar soluções eficientes e bem estruturadas. T
 
 ### 📁 Projetos em Destaque
 
-*Abaixo, você pode conferir alguns dos meus principais projetos que demonstram minhas habilidades na prática:*
-
-* **[Projeto curso de Teclado Interativo](https://github.com/Fkp1523/studio-master-teclado):** Aplicação desenvolvida para simular o curso de teclado, focada em interatividade e resposta a eventos do usuário. Um excelente caso de uso para demonstrar o controle do DOM e a aplicação de lógica de programação com JavaScript.
-
+* **Projeto Teclado Interativo:** Aplicação desenvolvida para auxiliar novos alunos ao treinamento de acordes, campo Harmônico, graus e etc...  teclado, focada em interatividade e resposta a eventos do utilizador. Um excelente caso de uso para demonstrar o controlo do DOM e a aplicação de lógica de programação.
+  - 💻 [Ver o Código no GitHub](https://github.com/Fkp1523/estúdio-mestre-teclado)
+  - 🚀 [Aceder à Aplicação](https://studio-master-teclado.vercel.app)
 ---
 
 ### 📫 Como me encontrar
