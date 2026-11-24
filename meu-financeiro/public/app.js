@@ -3,6 +3,7 @@ const $$ = selector => [...document.querySelectorAll(selector)];
 const money = value => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const localISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+const dateForSelectedMonth = () => selectedMonth === currentMonth() ? localISO() : `${selectedMonth}-01`;
 const fmtDate = value => value ? new Date(`${String(value).slice(0,10)}T12:00:00`).toLocaleDateString('pt-BR') : '—';
 const monthLabel = value => new Date(`${value}-02T12:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 const icons = { 'Água':'💧', 'Luz':'☼', 'Energia':'☼', 'Internet':'⌁', 'Celular':'▯', 'Moradia':'⌂', 'Transporte':'↗', 'Saúde':'✚', 'Educação':'▤', 'Cartão':'▣' };
@@ -13,6 +14,7 @@ let toastTimer;
 let needsFirstSetup = false;
 
 async function api(url, options = {}) {
+  if (window.localFinance?.isLocal) return window.localFinance.dispatch(url, options);
   const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || 'Não foi possível concluir.');
@@ -24,7 +26,11 @@ function empty(message) { return `<div class="empty-state">${esc(message)}</div>
 function fillMonthSelect() {
   const select = $('#monthSelect');
   const months = new Set([selectedMonth]);
-  for (let i = 0; i < 15; i++) { const date = new Date(); date.setDate(1); date.setMonth(date.getMonth() - i); months.add(`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`); }
+  const today = new Date();
+  for (let offset = -14; offset <= 12; offset++) {
+    const date = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    months.add(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+  }
   select.innerHTML = [...months].sort().reverse().map(month => `<option value="${month}" ${month === selectedMonth ? 'selected' : ''}>${esc(monthLabel(month))}</option>`).join('');
 }
 function setPage(page) {
@@ -93,7 +99,7 @@ function notifyUpcomingBills(items) {
     const key = `mf-reminder-${selectedMonth}-${bill.id}`;
     try { if (localStorage.getItem(key)) continue; localStorage.setItem(key, '1'); } catch { continue; }
     const when = days < 0 ? `está atrasada há ${Math.abs(days)} dia(s)` : days === 0 ? 'vence hoje' : `vence em ${days} dia(s)`;
-    const options = { body: `${bill.name} ${when}. Valor previsto: ${money(bill.expected_amount)}.`, icon: '/icon.svg', tag: key };
+    const options = { body: `${bill.name} ${when}. Valor previsto: ${money(bill.expected_amount)}.`, icon: './icon.svg', tag: key };
     if ('serviceWorker' in navigator) navigator.serviceWorker.ready.then(registration => registration.showNotification('Lembrete de conta', options)).catch(() => new Notification('Lembrete de conta', options));
     else new Notification('Lembrete de conta', options);
   }
@@ -163,7 +169,9 @@ function drawHistory(rows) {
 async function loadDashboard() {
   fillMonthSelect();
   try { dashboard = await api(`/api/dashboard?month=${encodeURIComponent(selectedMonth)}`); showError(''); drawDashboard(dashboard); }
-  catch (error) { showError(`${error.message} Confirme se o MySQL está ligado e se o banco foi criado com database/schema.sql.`); }
+  catch (error) {
+    showError(window.localFinance?.isLocal ? error.message : `${error.message} Confirme se o MySQL está ligado e se o banco foi criado com database/schema.sql.`);
+  }
 }
 function input(name, label, type = 'text', opts = {}) {
   const required = opts.required === false ? '' : 'required';
@@ -179,13 +187,13 @@ function openModal(type, record = null) {
   const r = record || {};
   $('#modalTitle').textContent = title;
   let fields = '';
-  if (type === 'income') fields = input('description','Descrição','text',{value:r.description,placeholder:'Ex.: salário'}) + input('amount','Valor recebido','number',{min:'0.01',step:'0.01',value:r.amount,placeholder:'0,00'}) + input('received_on','Data do recebimento','date',{value:r.received_on || localISO()}) + input('note','Observação (opcional)','text',{required:false,full:true,value:r.note});
-  if (type === 'bill') fields = input('category','Tipo de conta','select',{value:r.category || 'Água',options:['Água','Luz','Internet','Celular','Moradia','Transporte','Saúde','Educação','Cartão','Outros']}) + input('name','Identificação (opcional)','text',{required:false,value:r.name === r.category ? '' : r.name,placeholder:'Ex.: CPFL, se quiser diferenciar'}) + input('expected_amount','Valor previsto','number',{min:'0.01',step:'0.01',value:r.expected_amount,placeholder:'0,00'}) + input('due_day','Dia do vencimento','number',{min:'1',max:'31',value:r.due_day,placeholder:'10'});
+  if (type === 'income') fields = input('description','Descrição','text',{value:r.description,placeholder:'Ex.: salário'}) + input('amount','Valor recebido','number',{min:'0.01',step:'0.01',value:r.amount,placeholder:'0,00'}) + input('received_on','Data do recebimento','date',{value:r.received_on || dateForSelectedMonth()}) + input('note','Observação (opcional)','text',{required:false,full:true,value:r.note});
+  if (type === 'bill') fields = input('category','Tipo de conta','select',{value:r.category || 'Água',options:['Água','Luz','Internet','Celular','Moradia','Transporte','Saúde','Educação','Cartão','Outros']}) + input('name','Identificação (opcional)','text',{required:false,value:r.name === r.category ? '' : r.name,placeholder:'Ex.: CPFL, se quiser diferenciar'}) + input('expected_amount','Valor previsto','number',{min:'0.01',step:'0.01',value:r.expected_amount,placeholder:'0,00'}) + input('due_day','Dia do vencimento','number',{min:'1',max:'31',value:r.due_day,placeholder:'10'}) + input('started_month','Começa em','month',{required:false,value:record ? r.started_month : selectedMonth,placeholder:'AAAA-MM'});
   if (type === 'installment') fields = input('name','Nome da compra','text',{value:r.name,placeholder:'Ex.: Geladeira'}) + input('store','Loja ou cartão (opcional)','text',{required:false,value:r.store}) + input('amount','Valor da parcela','number',{min:'0.01',step:'0.01',value:r.amount,placeholder:'0,00'}) + input('total','Número de parcelas','number',{min:'1',value:r.total,placeholder:'10'}) + input('paid','Parcelas já pagas','number',{min:'0',value:r.paid ?? 0}) + input('started_month','Começa em','month',{value:r.started_month || selectedMonth});
   if (type === 'debt') fields = input('name','Nome da dívida','text',{value:r.name,placeholder:'Ex.: Empréstimo pessoal'}) + input('creditor','Banco ou credor (opcional)','text',{required:false,value:r.creditor}) + input('original_amount','Valor original da dívida','number',{min:'0.01',step:'0.01',value:r.original_amount,placeholder:'30000,00'}) + input('balance','Saldo que falta pagar','number',{min:'0',step:'0.01',value:r.balance,placeholder:'30000,00'}) + `<p class="form-help full">O valor original fica registrado. Cada abatimento reduz o saldo, mesmo que os pagamentos tenham valores diferentes.</p>` + input('monthly_payment','Parcela mensal (opcional)','number',{required:false,min:'0',step:'0.01',value:r.monthly_payment,placeholder:'0,00'}) + input('due_day','Dia de vencimento (opcional)','number',{required:false,min:'1',max:'31',value:r.due_day}) + input('note','Anotação (opcional)','textarea',{required:false,full:true,value:r.note});
-  if (type === 'payBill') fields = input('amount','Valor pago','number',{min:'0.01',step:'0.01',value:record.expected_amount}) + input('paid_on','Data do pagamento','date',{value:localISO()}) + input('note','Observação (opcional)','text',{required:false,full:true});
-  if (type === 'payInstallment') fields = input('paid_on','Data do pagamento','date',{value:localISO()}) + input('note','Observação (opcional)','text',{required:false,full:true});
-  if (type === 'payDebt') fields = input('amount','Valor deste pagamento','number',{min:'0.01',max:record.balance,step:'0.01',placeholder:`Até ${money(record.balance)}`}) + `<div class="payment-preview full" id="debtPaymentPreview">Saldo restante após pagar <strong>${money(record.balance)}</strong></div>` + input('paid_on','Data do pagamento','date',{value:localISO()}) + input('note','Observação (opcional)','text',{required:false,full:true});
+  if (type === 'payBill') fields = input('amount','Valor pago','number',{min:'0.01',step:'0.01',value:record.expected_amount}) + input('paid_on','Data do pagamento','date',{value:dateForSelectedMonth()}) + input('note','Observação (opcional)','text',{required:false,full:true});
+  if (type === 'payInstallment') fields = input('paid_on','Data do pagamento','date',{value:dateForSelectedMonth()}) + input('note','Observação (opcional)','text',{required:false,full:true});
+  if (type === 'payDebt') fields = input('amount','Valor deste pagamento','number',{min:'0.01',max:record.balance,step:'0.01',placeholder:`Até ${money(record.balance)}`}) + `<div class="payment-preview full" id="debtPaymentPreview">Saldo restante após pagar <strong>${money(record.balance)}</strong></div>` + input('paid_on','Data do pagamento','date',{value:dateForSelectedMonth()}) + input('note','Observação (opcional)','text',{required:false,full:true});
   $('#formFields').innerHTML = fields;
   $('#modalBackdrop').hidden = false;
   if (type === 'debt') {
@@ -249,14 +257,35 @@ async function deleteRecord(url, label) {
 async function downloadBackup() {
   try {
     const data = await api('/api/backup');
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const filename = `meu-financeiro-backup-${localISO()}.json`;
+    const json = JSON.stringify(data, null, 2);
+    if (window.localFinance?.isLocal && window.AndroidFinance?.saveBackup) {
+      window.AndroidFinance.saveBackup(filename, json);
+      return;
+    }
+    const file = new File([json], filename, { type: 'application/json' });
+    if (window.localFinance?.isLocal && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ title: 'Backup do Meu Financeiro', files: [file] });
+        return;
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+      }
+    }
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `meu-financeiro-backup-${localISO()}.json`;
-    link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    link.href = URL.createObjectURL(file);
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 30000);
     showToast('Backup baixado.');
   } catch (error) { showError(error.message); }
 }
+window.addEventListener('android-backup-result', event => {
+  if (event.detail?.status === 'saved') showToast('Backup salvo.');
+  if (event.detail?.status === 'error') showError('Não foi possível salvar o backup.');
+});
 $('#restoreFile').addEventListener('change', async event => {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -270,13 +299,17 @@ $('#restoreFile').addEventListener('change', async event => {
 });
 $('#recordForm').addEventListener('submit', async event => {
   event.preventDefault();
+  const submit = event.currentTarget.querySelector('button[type=submit]');
+  if (submit.disabled) return;
+  submit.disabled = true;
   try { await submitRecord(new FormData(event.currentTarget)); closeModal(); showToast('Registro salvo com sucesso.'); await loadDashboard(); }
   catch (error) { showError(error.message); }
+  finally { submit.disabled = false; }
 });
 $('#monthSelect').addEventListener('change', event => { selectedMonth = event.target.value; loadDashboard(); });
 window.setInterval(() => { if (!document.hidden) loadDashboard(); }, 30 * 60 * 1000);
 $('#todayLabel').textContent = new Date().toLocaleDateString('pt-BR', { weekday:'long', day:'numeric', month:'long' }).toUpperCase();
-if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('/sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 function showAuth(setup) {
   needsFirstSetup = setup;
   $('#appShell').hidden = true;
@@ -289,6 +322,16 @@ function showAuth(setup) {
   $('#authFields').innerHTML = input('username','Usuário','text',{placeholder:'Seu usuário'}) + input('password','Senha','password',{placeholder:setup ? 'Pelo menos 12 caracteres' : 'Sua senha'}) + (setup ? input('passwordConfirm','Confirmar senha','password',{placeholder:'Digite a senha novamente'}) : '');
 }
 async function initializeApp() {
+  if (window.localFinance?.isLocal) {
+    $('#authGate').hidden = true;
+    $('#appShell').hidden = false;
+    $('[data-logout]').hidden = true;
+    $('[data-backup]').textContent = 'Exportar backup';
+    $('[data-restore]').textContent = 'Importar backup';
+    $('.backup-note').textContent = 'Seus registros ficam no aparelho. Para transferir ao computador, exporte o backup. Importar substitui os registros atuais.';
+    $('#balanceStatus').textContent = 'Carregando dados do aparelho…';
+    await loadDashboard(); return;
+  }
   try {
     const status = await api('/api/auth/status');
     if (status.authenticated) { $('#authGate').hidden = true; $('#appShell').hidden = false; await loadDashboard(); }
@@ -320,3 +363,5 @@ async function logoutUser() {
   catch (error) { showError(error.message); }
 }
 initializeApp();
+
+

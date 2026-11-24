@@ -32,9 +32,10 @@ Sou um desenvolvedor focado em criar soluções eficientes e bem estruturadas. T
   - 💻 [Ver o Código no GitHub](https://github.com/Fkp1523/studio-master-teclado)
   - 🚀 [Aceder à Aplicação](https://studio-master-teclado.vercel.app)
 
-* **Meu Financeiro:** App responsivo em Node.js, JavaScript e MySQL para organizar renda, contas, compras parceladas e dívidas, com histórico, backup e suporte a PWA.
+* **Meu Financeiro:** Controle pessoal de renda, contas, compras parceladas e dívidas. Usa Node.js e MySQL no computador e funciona offline no Android, com transferência de registros por backup.
   - 💻 [Ver o código](https://github.com/Fkp1523/Fkp1523/tree/main/meu-financeiro)
-  - 📱 [Configuração e instalação](https://github.com/Fkp1523/Fkp1523/blob/main/meu-financeiro/README.md)
+  - 📱 [Baixar instalador para Android](https://github.com/Fkp1523/Fkp1523/raw/refs/heads/main/meu-financeiro/downloads/Meu-Financeiro-Android.apk)
+  - 📖 [Configuração e uso](https://github.com/Fkp1523/Fkp1523/blob/main/meu-financeiro/README.md)
 
 ---
 

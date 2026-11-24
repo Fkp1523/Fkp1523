@@ -30,6 +30,7 @@ const pool = mysql.createPool({
 
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const monthOK = value => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(value || ''));
+const billMonthOK = value => value == null || value === '' || (typeof value === 'string' && monthOK(value));
 const positive = value => Number.isFinite(Number(value)) && Number(value) > 0;
 const dateOK = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
 const scrypt = promisify(scryptCallback);
@@ -37,6 +38,27 @@ const cookieName = 'mf_session';
 const sessionDurationMs = 7 * 24 * 60 * 60 * 1000;
 const loginAttempts = new Map();
 const hashToken = token => createHash('sha256').update(token).digest('hex');
+
+let billSchemaReady;
+function ensureBillSchema() {
+  if (!billSchemaReady) {
+    billSchemaReady = (async () => {
+      const [columns] = await pool.query("SHOW COLUMNS FROM bills WHERE Field = 'started_month'");
+      if (columns.length) return;
+      try {
+        await pool.query('ALTER TABLE bills ADD COLUMN started_month CHAR(7) NULL DEFAULT NULL');
+      } catch (error) {
+        // Another instance may have updated the schema after the column check.
+        if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+      }
+    })().catch(error => {
+      billSchemaReady = undefined;
+      throw error;
+    });
+  }
+  return billSchemaReady;
+}
+
 function readCookie(req, name) {
   const cookie = (req.headers.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith(`${name}=`));
   return cookie ? decodeURIComponent(cookie.slice(name.length + 1)) : '';
@@ -115,12 +137,14 @@ app.use('/api', asyncRoute(async (req, res, next) => {
   const [sessions] = await pool.query(`SELECT u.id,u.username FROM app_sessions s JOIN app_users u ON u.id=s.user_id
     WHERE s.token_hash=? AND s.expires_at>NOW() LIMIT 1`, [hashToken(token)]);
   if (!sessions.length) { clearCookie(res); return res.status(401).json({ error: 'Sua sessão expirou. Entre novamente.' }); }
+  await ensureBillSchema();
   req.user = sessions[0];
   next();
 }));
 
 app.get('/api/health', asyncRoute(async (_req, res) => {
   await pool.query('SELECT 1');
+  await ensureBillSchema();
   res.json({ ok: true, database: 'connected' });
 }));
 
@@ -132,7 +156,8 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     pool.query('SELECT COALESCE(SUM(amount),0) AS total FROM incomes WHERE active=1 AND DATE_FORMAT(received_on, "%Y-%m") = ?', [month]),
     pool.query(`SELECT b.*, bp.id AS payment_id, bp.amount AS paid_amount, bp.paid_on
       FROM bills b LEFT JOIN bill_payments bp ON bp.bill_id=b.id AND bp.period=?
-      WHERE b.active=1 ORDER BY b.due_day, b.name`, [month]),
+      WHERE b.active=1 AND (b.started_month IS NULL OR b.started_month<=?)
+      ORDER BY b.due_day, b.name`, [month, month]),
     pool.query(`SELECT * FROM installments WHERE active=1 AND paid<total AND started_month<=? ORDER BY name`, [month]),
     pool.query('SELECT * FROM debts WHERE active=1 ORDER BY balance DESC, name'),
     pool.query(`SELECT COALESCE(SUM(amount),0) AS total FROM transactions WHERE period=? AND kind IN ('bill','installment','debt')`, [month]),
@@ -214,16 +239,21 @@ app.delete('/api/incomes/:id', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/bills', asyncRoute(async (req, res) => {
-  const { name, category = 'Outros', expected_amount, due_day } = req.body;
+  const { name, category = 'Outros', expected_amount, due_day, started_month } = req.body;
   if (!String(name || '').trim() || !positive(expected_amount) || !Number.isInteger(Number(due_day)) || due_day < 1 || due_day > 31) return res.status(400).json({ error: 'Confira o nome, valor e dia de vencimento.' });
-  const [result] = await pool.query('INSERT INTO bills (name, category, expected_amount, due_day) VALUES (?,?,?,?)', [String(name).trim(), category, expected_amount, due_day]);
+  if (!billMonthOK(started_month)) return res.status(400).json({ error: 'Mês de início inválido. Use AAAA-MM.' });
+  const [result] = await pool.query('INSERT INTO bills (name, category, expected_amount, due_day, started_month) VALUES (?,?,?,?,?)',
+    [String(name).trim(), category, expected_amount, due_day, started_month || null]);
   res.status(201).json({ id: result.insertId });
 }));
 
 app.patch('/api/bills/:id', asyncRoute(async (req, res) => {
-  const { name, category = 'Outros', expected_amount, due_day } = req.body;
+  const { name, category = 'Outros', expected_amount, due_day, started_month } = req.body;
   if (!String(name || '').trim() || !positive(expected_amount) || !Number.isInteger(Number(due_day)) || due_day < 1 || due_day > 31) return res.status(400).json({ error: 'Confira o nome, valor e dia de vencimento.' });
-  const [result] = await pool.query('UPDATE bills SET name=?,category=?,expected_amount=?,due_day=? WHERE id=? AND active=1', [String(name).trim(), category, expected_amount, due_day, req.params.id]);
+  if (!billMonthOK(started_month)) return res.status(400).json({ error: 'Mês de início inválido. Use AAAA-MM.' });
+  const [result] = await pool.query(`UPDATE bills SET name=?,category=?,expected_amount=?,due_day=?,
+    started_month=IF(?, ?, started_month) WHERE id=? AND active=1`,
+    [String(name).trim(), category, expected_amount, due_day, started_month !== undefined, started_month || null, req.params.id]);
   if (!result.affectedRows) return res.status(404).json({ error: 'Conta não encontrada.' });
   res.json({ ok: true });
 }));
@@ -295,17 +325,32 @@ app.post('/api/installments/:id/payments', asyncRoute(async (req, res) => {
   } catch (error) { await conn.rollback(); throw error; } finally { conn.release(); }
 }));
 
+function debtValues(body) {
+  const { creditor = null, note = null } = body;
+  const name = String(body.name || '').trim();
+  const original = Number(body.original_amount);
+  const balance = body.balance === '' || body.balance == null ? original : Number(body.balance);
+  const monthly = Number(body.monthly_payment ?? 0);
+  const dueDay = body.due_day === '' || body.due_day == null ? null : Number(body.due_day);
+  if (!name || !positive(original) || !Number.isFinite(balance) || balance < 0 || balance > original ||
+      !Number.isFinite(monthly) || monthly < 0 ||
+      (dueDay !== null && (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31))) return null;
+  return { name, creditor, original, balance, monthly, dueDay, note };
+}
+
 app.post('/api/debts', asyncRoute(async (req, res) => {
-  const { name, creditor = null, original_amount, balance = original_amount, monthly_payment = 0, due_day = null, note = null } = req.body;
-  if (!String(name || '').trim() || !positive(original_amount) || !Number.isFinite(Number(balance)) || balance < 0 || balance > original_amount || !Number.isFinite(Number(monthly_payment)) || monthly_payment < 0) return res.status(400).json({ error: 'Confira o nome e os valores da dívida.' });
-  const [result] = await pool.query('INSERT INTO debts (name,creditor,original_amount,starting_balance,balance,monthly_payment,due_day,note) VALUES (?,?,?,?,?,?,?,?)', [String(name).trim(), creditor, original_amount, balance, balance, monthly_payment, due_day || null, note]);
+  const debt = debtValues(req.body);
+  if (!debt) return res.status(400).json({ error: 'Confira o nome, os valores e o dia de vencimento da dívida.' });
+  const { name, creditor, original, balance, monthly, dueDay, note } = debt;
+  const [result] = await pool.query('INSERT INTO debts (name,creditor,original_amount,starting_balance,balance,monthly_payment,due_day,note) VALUES (?,?,?,?,?,?,?,?)', [name, creditor, original, balance, balance, monthly, dueDay, note]);
   res.status(201).json({ id: result.insertId });
 }));
 
 app.patch('/api/debts/:id', asyncRoute(async (req, res) => {
-  const { name, creditor = null, original_amount, balance = original_amount, monthly_payment = 0, due_day = null, note = null } = req.body;
-  if (!String(name || '').trim() || !positive(original_amount) || !Number.isFinite(Number(balance)) || balance < 0 || balance > original_amount || !Number.isFinite(Number(monthly_payment)) || monthly_payment < 0) return res.status(400).json({ error: 'Confira o nome e os valores da dívida.' });
-  const [result] = await pool.query('UPDATE debts SET name=?,creditor=?,original_amount=?,balance=?,monthly_payment=?,due_day=?,note=? WHERE id=? AND active=1', [String(name).trim(), creditor, original_amount, balance, monthly_payment, due_day || null, note, req.params.id]);
+  const debt = debtValues(req.body);
+  if (!debt) return res.status(400).json({ error: 'Confira o nome, os valores e o dia de vencimento da dívida.' });
+  const { name, creditor, original, balance, monthly, dueDay, note } = debt;
+  const [result] = await pool.query('UPDATE debts SET name=?,creditor=?,original_amount=?,balance=?,monthly_payment=?,due_day=?,note=? WHERE id=? AND active=1', [name, creditor, original, balance, monthly, dueDay, note, req.params.id]);
   if (!result.affectedRows) return res.status(404).json({ error: 'Dívida não encontrada.' });
   res.json({ ok: true });
 }));
@@ -363,6 +408,10 @@ app.post('/api/backup/restore', asyncRoute(async (req, res) => {
   if (req.body?.version !== 1 || !data || requiredCollections.some(key => !Array.isArray(data[key])) || requiredCollections.some(key => data[key].length > 20000)) {
     return res.status(400).json({ error: 'Arquivo de backup inválido ou grande demais.' });
   }
+  if (data.bills.some(bill => !bill || typeof bill !== 'object' || !billMonthOK(bill.started_month))) {
+    return res.status(400).json({ error: 'O backup contém uma conta com mês de início inválido.' });
+  }
+  const bills = data.bills.map(bill => ({ ...bill, started_month: bill.started_month || null }));
   const connection = await pool.getConnection();
   const insertRows = async (table, columns, rows) => {
     const sql = `INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`;
@@ -377,7 +426,7 @@ app.post('/api/backup/restore', asyncRoute(async (req, res) => {
     await connection.query('DELETE FROM debts');
     await connection.query('DELETE FROM bills');
     await insertRows('incomes',['id','description','amount','received_on','note','active','created_at'],data.incomes);
-    await insertRows('bills',['id','name','category','expected_amount','due_day','active','created_at'],data.bills);
+    await insertRows('bills',['id','name','category','expected_amount','due_day','started_month','active','created_at'],bills);
     await insertRows('bill_payments',['id','bill_id','period','amount','paid_on','note','created_at'],data.billPayments);
     await insertRows('installments',['id','name','store','amount','total','paid','started_month','active','created_at'],data.installments);
     await insertRows('debts',['id','name','creditor','original_amount','starting_balance','balance','monthly_payment','due_day','note','active','created_at'],data.debts);
@@ -394,4 +443,3 @@ app.use('/api', (err, _req, res, _next) => {
 
 const port = Number(process.env.PORT || 3000);
 app.listen(port, '127.0.0.1', () => console.log(`Meu Financeiro disponível em http://localhost:${port}`));
-
