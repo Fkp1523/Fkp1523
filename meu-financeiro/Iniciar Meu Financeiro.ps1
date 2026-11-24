@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $projectPath = Split-Path -Parent $MyInvocation.MyCommand.Path
-$appUrl = 'http://127.0.0.1:3000'
+$desktopPort = 3010
+$appUrl = "http://127.0.0.1:$desktopPort"
 
 function Test-FinanceiroReady {
   try {
@@ -24,13 +25,19 @@ if (-not (Test-FinanceiroReady)) {
       continue
     }
   }
-  $node = Get-Command node -ErrorAction SilentlyContinue
+  $node = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $node) {
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show('O Node.js não foi encontrado. Instale o Node.js para iniciar o Meu Financeiro.', 'Meu Financeiro') | Out-Null
     exit 1
   }
-  Start-Process -FilePath $node.Source -ArgumentList 'server.js' -WorkingDirectory $projectPath -WindowStyle Hidden
+  $previousPort = $env:PORT
+  try {
+    $env:PORT = [string]$desktopPort
+    Start-Process -FilePath $node.Source -ArgumentList 'server.js' -WorkingDirectory $projectPath -WindowStyle Hidden
+  } finally {
+    $env:PORT = $previousPort
+  }
   $deadline = [DateTime]::UtcNow.AddSeconds(25)
   do {
     Start-Sleep -Seconds 1
