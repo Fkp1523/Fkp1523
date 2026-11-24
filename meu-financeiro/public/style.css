@@ -16,3 +16,10 @@
 .form-help{grid-column:1/-1;margin:0;padding:10px 11px;border:1px solid #70e2bd20;border-radius:9px;background:#70e2bd08;color:#a5b6c4;font-size:10px;line-height:1.5}.payment-preview{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px;border:1px solid #70e2bd32;border-radius:10px;background:#70e2bd0c;color:#b2c4cf;font-size:10px}.payment-preview strong{color:var(--mint);font:700 15px Manrope;white-space:nowrap}
 .bill-filter{margin-bottom:10px}
 .bill-filter[hidden]{display:none}
+.month-control label{font-size:10px;color:var(--muted)}
+.month-picker{display:flex;align-items:center;gap:4px}
+.month-picker input,.month-step{min-height:32px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text)}
+.month-picker input{width:158px;min-width:0;padding:5px 7px;font:inherit;font-size:12px}
+.month-step{min-width:31px;padding:0 5px;font-size:18px;line-height:1;cursor:pointer}
+.month-step:hover{border-color:var(--mint)}
+@media(max-width:520px){.topbar{flex-wrap:wrap}.month-picker input{width:132px}.month-step{min-width:29px}}

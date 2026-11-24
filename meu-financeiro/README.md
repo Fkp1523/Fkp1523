@@ -41,7 +41,7 @@ Você pode copiar o arquivo por cabo USB. A importação substitui os registros 
 
 - Registrar renda e consultar previsão mensal.
 - Criar um acesso com senha no computador. O servidor guarda as senhas com hash scrypt.
-- Planejar os próximos 12 meses. Contas mensais se repetem a partir do mês escolhido.
+- Escolher o mês e o ano ou avançar e voltar mês a mês. Contas mensais se repetem a partir do mês escolhido.
 - Manter contas avulsas na lista até o pagamento. Contas pagas ficam disponíveis no Histórico.
 - Criar compras parceladas e registrar parcelas pagas.
 - Editar e arquivar rendas, contas, compras parceladas e dívidas sem apagar pagamentos antigos.

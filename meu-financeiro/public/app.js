@@ -9,6 +9,7 @@ const monthLabel = value => new Date(`${value}-02T12:00:00`).toLocaleDateString(
 const icons = { 'Água':'💧', 'Luz':'☼', 'Energia':'☼', 'Internet':'⌁', 'Celular':'▯', 'Moradia':'⌂', 'Transporte':'↗', 'Saúde':'✚', 'Educação':'▤', 'Cartão':'▣' };
 let selectedMonth = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
 let dashboard = null;
+let dashboardRequest = 0;
 let modal = null;
 let toastTimer;
 let needsFirstSetup = false;
@@ -24,15 +25,21 @@ async function api(url, options = {}) {
 function showError(message = '') { const banner = $('#errorBanner'); banner.textContent = message; banner.hidden = !message; }
 function showToast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2500); }
 function empty(message) { return `<div class="empty-state">${esc(message)}</div>`; }
-function fillMonthSelect() {
-  const select = $('#monthSelect');
-  const months = new Set([selectedMonth]);
-  const today = new Date();
-  for (let offset = -14; offset <= 12; offset++) {
-    const date = new Date(today.getFullYear(), today.getMonth() + offset, 1);
-    months.add(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+function chooseMonth(month) {
+  if (!/^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(month)) {
+    $('#monthSelect').value = selectedMonth;
+    showToast('Escolha um mês válido ou use o formato AAAA-MM.');
+    return;
   }
-  select.innerHTML = [...months].sort().reverse().map(month => `<option value="${month}" ${month === selectedMonth ? 'selected' : ''}>${esc(monthLabel(month))}</option>`).join('');
+  if (month === selectedMonth) return;
+  selectedMonth = month;
+  showPaidBills = false;
+  return loadDashboard();
+}
+function moveMonth(step) {
+  const [year, month] = selectedMonth.split('-').map(Number);
+  const date = new Date(year, month - 1 + step, 1);
+  return chooseMonth(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
 }
 function setPage(page) {
   const titles = { inicio: 'Visão geral', contas: 'Contas do mês', parcelas: 'Compras parceladas', dividas: 'Dívidas', historico: 'Histórico' };
@@ -189,9 +196,16 @@ function drawHistory(rows) {
   $('#historyList').innerHTML = rows.length ? rows.map(h => `<div class="history-row"><span class="row-icon">${h.kind === 'debt' ? '◉' : h.kind === 'bill' ? '▤' : h.kind === 'income' ? '＋' : '▦'}</span><div class="row-copy"><div class="row-title">${esc(h.label)}</div><div class="row-sub">${fmtDate(h.happened_on)} · ${monthLabel(h.period)}${h.note ? ` · ${esc(h.note)}` : ''}</div></div><div class="row-right"><div class="row-amount">${h.kind === 'income' ? '+' : '−'} ${money(h.amount)}</div>${h.kind === 'debt' ? `<div class="row-sub">restante ${money(h.remaining_after)}</div>` : ''}</div></div>`).join('') : empty('Nenhuma movimentação neste mês.');
 }
 async function loadDashboard() {
-  fillMonthSelect();
-  try { dashboard = await api(`/api/dashboard?month=${encodeURIComponent(selectedMonth)}`); showError(''); drawDashboard(dashboard); }
-  catch (error) {
+  $('#monthSelect').value = selectedMonth;
+  const request = ++dashboardRequest;
+  try {
+    const data = await api(`/api/dashboard?month=${encodeURIComponent(selectedMonth)}`);
+    if (request !== dashboardRequest) return;
+    dashboard = data;
+    showError('');
+    drawDashboard(dashboard);
+  } catch (error) {
+    if (request !== dashboardRequest) return;
     showError(window.localFinance?.isLocal ? error.message : `${error.message} Confirme se o MySQL está ligado e se o banco foi criado com database/schema.sql.`);
   }
 }
@@ -261,6 +275,8 @@ async function submitRecord(values) {
 document.addEventListener('click', event => {
   const logout = event.target.closest('[data-logout]');
   if (logout) return logoutUser();
+  const monthControl = event.target.closest('[data-month-step]');
+  if (monthControl) return moveMonth(Number(monthControl.dataset.monthStep));
   if (event.target.closest('[data-toggle-paid-bills]') && dashboard) {
     showPaidBills = !showPaidBills;
     return drawBills(dashboard.bills);
@@ -342,7 +358,7 @@ $('#recordForm').addEventListener('submit', async event => {
   catch (error) { showError(error.message); }
   finally { submit.disabled = false; }
 });
-$('#monthSelect').addEventListener('change', event => { selectedMonth = event.target.value; showPaidBills = false; loadDashboard(); });
+$('#monthSelect').addEventListener('change', event => chooseMonth(event.target.value));
 window.setInterval(() => { if (!document.hidden) loadDashboard(); }, 30 * 60 * 1000);
 $('#todayLabel').textContent = new Date().toLocaleDateString('pt-BR', { weekday:'long', day:'numeric', month:'long' }).toUpperCase();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});
