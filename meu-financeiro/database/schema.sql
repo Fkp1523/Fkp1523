@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS bills (
   expected_amount DECIMAL(12,2) NOT NULL,
   due_day TINYINT UNSIGNED NOT NULL,
   started_month CHAR(7) NULL DEFAULT NULL,
+  recurring TINYINT UNSIGNED NOT NULL DEFAULT 1,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_bills_active_due (active, due_day)

@@ -105,6 +105,12 @@
     return value;
   }
 
+  function billFrequency(value) {
+    if (value === undefined || value === 1 || value === '1' || value === true) return 1;
+    if (value === 0 || value === '0' || value === false) return 0;
+    throw new Error('Escolha se a conta é mensal ou avulsa.');
+  }
+
   function add(data, table, details) {
     const row = { id: data.counters[table]++, created_at: now(), ...details };
     if (table !== 'bill_payments') row.active = 1;
@@ -133,7 +139,8 @@
     bills: body => ({
       name: field(body.name, 120, true), category: field(body.category, 40) || 'Outros',
       expected_amount: amount(body.expected_amount), due_day: integer(body.due_day, 1, 31),
-      started_month: body.started_month == null || body.started_month === '' ? null : month(body.started_month)
+      started_month: body.started_month == null || body.started_month === '' ? null : month(body.started_month),
+      recurring: billFrequency(body.recurring)
     }),
     installments: body => {
       const total = integer(body.total, 1, 65535);
@@ -200,11 +207,14 @@
           restored.counters[table] = Math.max(restored.counters[table], id + 1);
         }
       }
-      const billIds = new Set(restored.bills.map(row => row.id));
+      const bills = new Map(restored.bills.map(row => [row.id, row]));
       const paidPeriods = new Set();
+      const paidOneOffBills = new Set();
       for (const payment of restored.bill_payments) {
         const key = payment.bill_id + ':' + payment.period;
-        if (!billIds.has(payment.bill_id) || paidPeriods.has(key)) throw new Error();
+        const bill = bills.get(payment.bill_id);
+        if (!bill || paidPeriods.has(key) || paidOneOffBills.has(payment.bill_id)) throw new Error();
+        if (bill.recurring === 0) paidOneOffBills.add(payment.bill_id);
         paidPeriods.add(key);
       }
     } catch {
@@ -236,7 +246,7 @@
         ...row,
         created_at: row.created_at || defaultCreatedAt(row),
         ...(table === 'debts' ? { monthly_payment: Number(row.monthly_payment || 0) } : {}),
-        ...(table === 'bills' ? { started_month: row.started_month ?? null } : {})
+        ...(table === 'bills' ? { started_month: row.started_month ?? null, recurring: row.recurring ?? 1 } : {})
       }))
     ]));
     return { version: 1, exportedAt: new Date().toISOString(), data: backup };
@@ -245,8 +255,13 @@
   function save(data, collection, body, id) {
     const item = id ? findActive(data, collection, id) : null;
     const values = fields[collection](body);
-    if (collection === 'bills' && item && body.started_month === undefined) {
-      values.started_month = item.started_month ?? null;
+    if (collection === 'bills' && item) {
+      if (body.started_month === undefined) values.started_month = item.started_month ?? null;
+      const previousFrequency = item.recurring ?? 1;
+      if (body.recurring === undefined) values.recurring = previousFrequency;
+      if (values.recurring !== previousFrequency && data.bill_payments.some(row => row.bill_id === item.id)) {
+        throw new Error('Não é possível alterar a frequência após registrar um pagamento.');
+      }
     }
     if (collection === 'debts') {
       const historicalPaid = item ? sum(active(data.transactions).filter(row => (
@@ -276,8 +291,8 @@
     if (collection === 'bills') {
       const value = amount(body.amount);
       const period = date.slice(0, 7);
-      if (data.bill_payments.some(row => row.bill_id === item.id && row.period === period)) {
-        throw new Error('Esta conta já foi paga neste mês.');
+      if (data.bill_payments.some(row => row.bill_id === item.id && (item.recurring === 0 || row.period === period))) {
+        throw new Error(item.recurring === 0 ? 'Esta conta avulsa já foi quitada.' : 'Esta conta já foi paga neste mês.');
       }
       add(data, 'bill_payments', { bill_id: item.id, period, amount: value, paid_on: date, note });
       log(data, 'bill', item.id, item.name, value, date, note);
@@ -327,13 +342,20 @@
 
   function dashboard(data, period) {
     const incomes = active(data.incomes).filter(row => row.received_on.slice(0, 7) === period).sort(recentFirst('received_on'));
-    const paid = new Map(data.bill_payments.filter(row => row.period === period).map(row => [String(row.bill_id), row]));
+    const paid = new Map();
+    const paidEarlier = new Set();
+    for (const payment of data.bill_payments) {
+      const id = String(payment.bill_id);
+      if (payment.period === period) paid.set(id, payment);
+      if (payment.period < period) paidEarlier.add(id);
+    }
     const bills = active(data.bills)
       .filter(bill => bill.started_month == null || bill.started_month <= period)
+      .filter(bill => bill.recurring !== 0 || !paidEarlier.has(String(bill.id)))
       .map(bill => {
         const payment = paid.get(String(bill.id));
         return {
-          ...bill, started_month: bill.started_month ?? null,
+          ...bill, started_month: bill.started_month ?? null, recurring: bill.recurring ?? 1,
           payment_id: payment?.id ?? null, paid_amount: payment?.amount ?? null, paid_on: payment?.paid_on ?? null
         };
       })
@@ -345,14 +367,9 @@
     const allHistory = active(data.transactions);
     const monthlyHistory = allHistory.filter(row => row.period === period).sort(recentFirst('happened_on'));
     const income = sum(incomes, 'amount');
-    const billTotal = sum(bills, 'expected_amount');
-    const installmentTotal = sum(installments, 'amount');
-    const debtPayments = sum(debts.filter(debt => debt.balance > 0), 'monthly_payment');
+    const budget = calculateMonthlyBudget({ month: period, income, bills, installments, debts, payments: monthlyHistory });
     return {
-      month: period, income, openBills: sum(bills.filter(bill => bill.payment_id === null), 'expected_amount'),
-      installmentTotal, debtPayments, debtTotal: sum(debts, 'balance'), billTotal,
-      available: round(income - billTotal - installmentTotal - debtPayments),
-      paidThisMonth: sum(monthlyHistory.filter(row => paymentKinds.includes(row.kind)), 'amount'),
+      month: period, income, ...budget,
       debtTrend: debtTrend(debts, allHistory, period), bills, incomes, installments, debts,
       history: monthlyHistory.slice(0, 100)
     };

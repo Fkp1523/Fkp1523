@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const calculateMonthlyBudget = require('./public/monthly-budget');
 const mysql = require('mysql2/promise');
 const path = require('node:path');
 const { randomBytes, createHash, scrypt: scryptCallback, timingSafeEqual } = require('node:crypto');
@@ -31,6 +32,7 @@ const pool = mysql.createPool({
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const monthOK = value => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(value || ''));
 const billMonthOK = value => value == null || value === '' || (typeof value === 'string' && monthOK(value));
+const billFrequencyOK = value => value === undefined || [0, 1, '0', '1', false, true].includes(value);
 const positive = value => Number.isFinite(Number(value)) && Number(value) > 0;
 const dateOK = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
 const scrypt = promisify(scryptCallback);
@@ -43,13 +45,19 @@ let billSchemaReady;
 function ensureBillSchema() {
   if (!billSchemaReady) {
     billSchemaReady = (async () => {
-      const [columns] = await pool.query("SHOW COLUMNS FROM bills WHERE Field = 'started_month'");
-      if (columns.length) return;
-      try {
-        await pool.query('ALTER TABLE bills ADD COLUMN started_month CHAR(7) NULL DEFAULT NULL');
-      } catch (error) {
-        // Another instance may have updated the schema after the column check.
-        if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+      const [columns] = await pool.query("SHOW COLUMNS FROM bills WHERE Field IN ('started_month', 'recurring')");
+      const additions = [
+        ['started_month', 'ALTER TABLE bills ADD COLUMN started_month CHAR(7) NULL DEFAULT NULL'],
+        ['recurring', 'ALTER TABLE bills ADD COLUMN recurring TINYINT UNSIGNED NOT NULL DEFAULT 1']
+      ];
+      for (const [name, sql] of additions) {
+        if (columns.some(column => column.Field === name)) continue;
+        try {
+          await pool.query(sql);
+        } catch (error) {
+          // Another instance may have updated the schema after the column check.
+          if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+        }
       }
     })().catch(error => {
       billSchemaReady = undefined;
@@ -145,7 +153,7 @@ app.use('/api', asyncRoute(async (req, res, next) => {
 app.get('/api/health', asyncRoute(async (_req, res) => {
   await pool.query('SELECT 1');
   await ensureBillSchema();
-  res.json({ ok: true, database: 'connected' });
+  res.json({ ok: true, database: 'connected', monthlyBudget: true });
 }));
 
 app.get('/api/dashboard', asyncRoute(async (req, res) => {
@@ -157,21 +165,24 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     pool.query(`SELECT b.*, bp.id AS payment_id, bp.amount AS paid_amount, bp.paid_on
       FROM bills b LEFT JOIN bill_payments bp ON bp.bill_id=b.id AND bp.period=?
       WHERE b.active=1 AND (b.started_month IS NULL OR b.started_month<=?)
-      ORDER BY b.due_day, b.name`, [month, month]),
+        AND (b.recurring=1 OR NOT EXISTS (
+          SELECT 1 FROM bill_payments previous
+          WHERE previous.bill_id=b.id AND previous.period<?
+        ))
+      ORDER BY b.due_day, b.name`, [month, month, month]),
     pool.query(`SELECT * FROM installments WHERE active=1 AND paid<total AND started_month<=? ORDER BY name`, [month]),
     pool.query('SELECT * FROM debts WHERE active=1 ORDER BY balance DESC, name'),
-    pool.query(`SELECT COALESCE(SUM(amount),0) AS total FROM transactions WHERE period=? AND kind IN ('bill','installment','debt')`, [month]),
+    pool.query(`SELECT kind,item_id,SUM(amount) AS amount FROM transactions
+      WHERE active=1 AND period=? AND kind IN ('bill','installment','debt') GROUP BY kind,item_id`, [month]),
     pool.query('SELECT * FROM transactions WHERE active=1 AND period=? ORDER BY happened_on DESC, id DESC LIMIT 100', [month]),
     pool.query('SELECT id,starting_balance,DATE(created_at) AS created_on FROM debts WHERE active=1'),
     pool.query('SELECT item_id,amount,remaining_after,happened_on FROM transactions WHERE active=1 AND kind=\'debt\' AND happened_on<=? ORDER BY happened_on,id', [lastDay])
   ]);
   const [incomes] = await pool.query('SELECT * FROM incomes WHERE active=1 AND DATE_FORMAT(received_on, "%Y-%m")=? ORDER BY received_on DESC, id DESC', [month]);
   const income = Number(incomeRows[0].total);
-  const billTotal = billRows.reduce((sum, b) => sum + Number(b.expected_amount), 0);
-  const openBills = billRows.filter(b => !b.payment_id).reduce((sum, b) => sum + Number(b.expected_amount), 0);
-  const installmentTotal = installmentRows.reduce((sum, i) => sum + Number(i.amount), 0);
-  const debtPayments = debtRows.filter(d => Number(d.balance) > 0).reduce((sum, d) => sum + Number(d.monthly_payment), 0);
-  const debtTotal = debtRows.reduce((sum, d) => sum + Number(d.balance), 0);
+  const budget = calculateMonthlyBudget({
+    month, income, bills: billRows, installments: installmentRows, debts: debtRows, payments: paymentRows
+  });
   const trendMonths = [];
   for (let i = 11; i >= 0; i--) {
     const d = new Date(`${month}-01T12:00:00`); d.setMonth(d.getMonth() - i);
@@ -191,9 +202,7 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     }
     return { month: period, balance: Number(total.toFixed(2)) };
   });
-  res.json({ month, income, openBills, installmentTotal, debtPayments, debtTotal,
-    billTotal, available: income - billTotal - installmentTotal - debtPayments,
-    paidThisMonth: Number(paymentRows[0].total), debtTrend, bills: billRows,
+  res.json({ month, income, ...budget, debtTrend, bills: billRows,
     incomes, installments: installmentRows, debts: debtRows, history: historyRows });
 }));
 
@@ -239,23 +248,50 @@ app.delete('/api/incomes/:id', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/bills', asyncRoute(async (req, res) => {
-  const { name, category = 'Outros', expected_amount, due_day, started_month } = req.body;
+  const { name, category = 'Outros', expected_amount, due_day, started_month, recurring = 1 } = req.body;
   if (!String(name || '').trim() || !positive(expected_amount) || !Number.isInteger(Number(due_day)) || due_day < 1 || due_day > 31) return res.status(400).json({ error: 'Confira o nome, valor e dia de vencimento.' });
   if (!billMonthOK(started_month)) return res.status(400).json({ error: 'Mês de início inválido. Use AAAA-MM.' });
-  const [result] = await pool.query('INSERT INTO bills (name, category, expected_amount, due_day, started_month) VALUES (?,?,?,?,?)',
-    [String(name).trim(), category, expected_amount, due_day, started_month || null]);
+  if (!billFrequencyOK(recurring)) return res.status(400).json({ error: 'Escolha se a conta é mensal ou avulsa.' });
+  const [result] = await pool.query('INSERT INTO bills (name, category, expected_amount, due_day, started_month, recurring) VALUES (?,?,?,?,?,?)',
+    [String(name).trim(), category, expected_amount, due_day, started_month || null, Number(recurring)]);
   res.status(201).json({ id: result.insertId });
 }));
 
+async function hasBillPayment(connection, billId) {
+  const [payments] = await connection.query('SELECT id FROM bill_payments WHERE bill_id=? LIMIT 1 FOR UPDATE', [billId]);
+  return payments.length > 0;
+}
+
 app.patch('/api/bills/:id', asyncRoute(async (req, res) => {
-  const { name, category = 'Outros', expected_amount, due_day, started_month } = req.body;
+  const { name, category = 'Outros', expected_amount, due_day, started_month, recurring } = req.body;
   if (!String(name || '').trim() || !positive(expected_amount) || !Number.isInteger(Number(due_day)) || due_day < 1 || due_day > 31) return res.status(400).json({ error: 'Confira o nome, valor e dia de vencimento.' });
   if (!billMonthOK(started_month)) return res.status(400).json({ error: 'Mês de início inválido. Use AAAA-MM.' });
-  const [result] = await pool.query(`UPDATE bills SET name=?,category=?,expected_amount=?,due_day=?,
-    started_month=IF(?, ?, started_month) WHERE id=? AND active=1`,
-    [String(name).trim(), category, expected_amount, due_day, started_month !== undefined, started_month || null, req.params.id]);
-  if (!result.affectedRows) return res.status(404).json({ error: 'Conta não encontrada.' });
-  res.json({ ok: true });
+  if (!billFrequencyOK(recurring)) return res.status(400).json({ error: 'Escolha se a conta é mensal ou avulsa.' });
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[bill]] = await connection.query('SELECT id,recurring FROM bills WHERE id=? AND active=1 FOR UPDATE', [req.params.id]);
+    if (!bill) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Conta não encontrada.' });
+    }
+    const currentFrequency = Number(bill.recurring);
+    const nextFrequency = recurring === undefined ? currentFrequency : Number(recurring);
+    if (nextFrequency !== currentFrequency && await hasBillPayment(connection, bill.id)) {
+      await connection.rollback();
+      return res.status(409).json({ error: 'A frequência de uma conta com pagamentos registrados não pode ser alterada.' });
+    }
+    await connection.query(`UPDATE bills SET name=?,category=?,expected_amount=?,due_day=?,
+      started_month=IF(?, ?, started_month),recurring=? WHERE id=?`,
+      [String(name).trim(), category, expected_amount, due_day, started_month !== undefined, started_month || null, nextFrequency, bill.id]);
+    await connection.commit();
+    res.json({ ok: true });
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }));
 
 app.delete('/api/bills/:id', asyncRoute(async (req, res) => {
@@ -268,21 +304,29 @@ app.post('/api/bills/:id/payments', asyncRoute(async (req, res) => {
   const { amount, paid_on, note = null } = req.body;
   const period = String(paid_on || '').slice(0, 7);
   if (!positive(amount) || !dateOK(paid_on) || !monthOK(period)) return res.status(400).json({ error: 'Informe valor e data válidos.' });
-  const [bills] = await pool.query('SELECT id,name FROM bills WHERE id=? AND active=1', [req.params.id]);
-  if (!bills.length) return res.status(404).json({ error: 'Conta não encontrada.' });
+  const connection = await pool.getConnection();
   try {
-    const conn = await pool.getConnection();
-    try {
-      await conn.beginTransaction();
-      await conn.query('INSERT INTO bill_payments (bill_id,period,amount,paid_on,note) VALUES (?,?,?,?,?)', [req.params.id, period, amount, paid_on, note]);
-      await conn.query('INSERT INTO transactions (kind,item_id,label,amount,happened_on,period,note) VALUES (\'bill\',?,?,?,?,?,?)', [req.params.id, bills[0].name, amount, paid_on, period, note]);
-      await conn.commit();
-    } catch (error) { await conn.rollback(); throw error; } finally { conn.release(); }
+    await connection.beginTransaction();
+    const [[bill]] = await connection.query('SELECT id,name,recurring FROM bills WHERE id=? AND active=1 FOR UPDATE', [req.params.id]);
+    if (!bill) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Conta não encontrada.' });
+    }
+    if (Number(bill.recurring) === 0 && await hasBillPayment(connection, bill.id)) {
+      await connection.rollback();
+      return res.status(409).json({ error: 'Esta conta avulsa já foi quitada.' });
+    }
+    await connection.query('INSERT INTO bill_payments (bill_id,period,amount,paid_on,note) VALUES (?,?,?,?,?)', [bill.id, period, amount, paid_on, note]);
+    await connection.query('INSERT INTO transactions (kind,item_id,label,amount,happened_on,period,note) VALUES (\'bill\',?,?,?,?,?,?)', [bill.id, bill.name, amount, paid_on, period, note]);
+    await connection.commit();
+    res.status(201).json({ ok: true });
   } catch (error) {
+    await connection.rollback();
     if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Esta conta já foi paga neste mês.' });
     throw error;
+  } finally {
+    connection.release();
   }
-  res.status(201).json({ ok: true });
 }));
 
 app.post('/api/installments', asyncRoute(async (req, res) => {
@@ -411,7 +455,22 @@ app.post('/api/backup/restore', asyncRoute(async (req, res) => {
   if (data.bills.some(bill => !bill || typeof bill !== 'object' || !billMonthOK(bill.started_month))) {
     return res.status(400).json({ error: 'O backup contém uma conta com mês de início inválido.' });
   }
-  const bills = data.bills.map(bill => ({ ...bill, started_month: bill.started_month || null }));
+  if (data.bills.some(bill => !billFrequencyOK(bill.recurring))) {
+    return res.status(400).json({ error: 'O backup contém uma conta com frequência inválida.' });
+  }
+  const bills = data.bills.map(bill => ({
+    ...bill, started_month: bill.started_month || null, recurring: Number(bill.recurring ?? 1)
+  }));
+  const oneTimeBillIds = new Set(bills.filter(bill => bill.recurring === 0).map(bill => String(bill.id)));
+  const paidOneTimeBillIds = new Set();
+  for (const payment of data.billPayments) {
+    const billId = String(payment?.bill_id);
+    if (!oneTimeBillIds.has(billId)) continue;
+    if (paidOneTimeBillIds.has(billId)) {
+      return res.status(400).json({ error: 'O backup contém mais de um pagamento para uma conta avulsa.' });
+    }
+    paidOneTimeBillIds.add(billId);
+  }
   const connection = await pool.getConnection();
   const insertRows = async (table, columns, rows) => {
     const sql = `INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`;
@@ -426,7 +485,7 @@ app.post('/api/backup/restore', asyncRoute(async (req, res) => {
     await connection.query('DELETE FROM debts');
     await connection.query('DELETE FROM bills');
     await insertRows('incomes',['id','description','amount','received_on','note','active','created_at'],data.incomes);
-    await insertRows('bills',['id','name','category','expected_amount','due_day','started_month','active','created_at'],bills);
+    await insertRows('bills',['id','name','category','expected_amount','due_day','started_month','recurring','active','created_at'],bills);
     await insertRows('bill_payments',['id','bill_id','period','amount','paid_on','note','created_at'],data.billPayments);
     await insertRows('installments',['id','name','store','amount','total','paid','started_month','active','created_at'],data.installments);
     await insertRows('debts',['id','name','creditor','original_amount','starting_balance','balance','monthly_payment','due_day','note','active','created_at'],data.debts);

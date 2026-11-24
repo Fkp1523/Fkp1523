@@ -41,8 +41,8 @@ Você pode copiar o arquivo por cabo USB. A importação substitui os registros 
 
 - Registrar renda e consultar previsão mensal.
 - Criar um acesso com senha no computador. O servidor guarda as senhas com hash scrypt.
-- Planejar os próximos 12 meses e definir o primeiro mês de uma conta recorrente.
-- Registrar o pagamento de contas por mês.
+- Planejar os próximos 12 meses. Contas mensais se repetem a partir do mês escolhido.
+- Manter contas avulsas na lista até o pagamento. Contas pagas ficam disponíveis no Histórico.
 - Criar compras parceladas e registrar parcelas pagas.
 - Editar e arquivar rendas, contas, compras parceladas e dívidas sem apagar pagamentos antigos.
 - Abater valores diferentes da mesma dívida e ver o saldo restante a cada pagamento.
@@ -50,6 +50,6 @@ Você pode copiar o arquivo por cabo USB. A importação substitui os registros 
 - Exportar todos os registros para um arquivo JSON de backup.
 - Restaurar um backup com confirmação antes de substituir os registros atuais.
 - Avisar no painel quando contas estiverem vencidas ou vencerem nos próximos 7 dias; notificações do navegador são opcionais.
-- Mostrar saldo mensal negativo em vermelho quando contas e compromissos previstos ultrapassam a renda cadastrada.
+- Mostrar quanto já saiu, quanto ainda está previsto e o saldo em vermelho quando essas despesas ultrapassam a renda.
 
 Os lembretes aparecem no painel enquanto o app está aberto. No computador, o navegador também pode mostrar notificações se você ativá-las.

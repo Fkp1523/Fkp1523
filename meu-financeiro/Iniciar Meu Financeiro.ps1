@@ -3,13 +3,24 @@ $projectPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 $desktopPort = 3010
 $appUrl = "http://127.0.0.1:$desktopPort"
 
-function Test-FinanceiroReady {
+function Get-FinanceiroHealth {
   try {
-    $health = Invoke-RestMethod -Uri "$appUrl/api/health" -TimeoutSec 2
-    return ($health.ok -and $health.database -eq 'connected')
+    return Invoke-RestMethod -Uri "$appUrl/api/health" -TimeoutSec 2
   } catch {
-    return $false
+    return $null
   }
+}
+
+function Test-FinanceiroReady {
+  $health = Get-FinanceiroHealth
+  return ($health.ok -and $health.database -eq 'connected' -and $health.monthlyBudget)
+}
+
+$runningApp = Get-FinanceiroHealth
+if ($runningApp.ok -and $runningApp.database -eq 'connected' -and -not $runningApp.monthlyBudget) {
+  # Uma versão anterior pode continuar aberta no Windows durante a atualização.
+  $desktopPort = 3011
+  $appUrl = "http://127.0.0.1:$desktopPort"
 }
 
 if (-not (Test-FinanceiroReady)) {

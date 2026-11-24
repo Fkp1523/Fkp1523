@@ -12,6 +12,7 @@ let dashboard = null;
 let modal = null;
 let toastTimer;
 let needsFirstSetup = false;
+let showPaidBills = false;
 
 async function api(url, options = {}) {
   if (window.localFinance?.isLocal) return window.localFinance.dispatch(url, options);
@@ -44,34 +45,47 @@ function setPage(page) {
 function drawDashboard(data) {
   $('#available').textContent = money(data.available);
   $('#incomeTotal').textContent = money(data.income);
+  const hint = $('.balance-hint');
+  if (data.remainingExpenses != null) {
+    hint.textContent = `Já pago ${money(data.paidThisMonth)} · Ainda previsto ${money(data.remainingExpenses)}`;
+  }
   const negative = Number(data.available) < 0;
   $('.balance-card').classList.toggle('is-negative', negative);
-  $('#balanceStatus').textContent = negative ? 'As despesas passam da renda' : 'Saldo previsto positivo';
+  $('#balanceStatus').textContent = negative ? 'As despesas passam da renda'
+    : Number(data.available) === 0 ? 'A renda cobre as despesas sem sobra' : 'Saldo previsto positivo';
   const items = [
     ['Contas em aberto', data.openBills, '▤', `${data.bills.filter(b => !b.payment_id).length} vencimento(s) pendente(s)`],
-    ['Parcelas do mês', data.installmentTotal, '▦', `${data.installments.length} compra(s) ativa(s)`],
-    ['Total das dívidas', data.debtTotal, '◉', `${data.debts.filter(d => Number(d.balance) > 0).length} saldo(s) em aberto`],
-    ['Pago neste mês', data.paidThisMonth, '↗', 'Contas e abatimentos registrados']
+    ['Parcelas do mês', data.installmentTotal, '▦', 'Pagas e ainda previstas'],
+    ['Total das dívidas', data.debtTotal, '◉', `${money(data.debtPayments)} em pagamentos deste mês`],
+    ['Pago neste mês', data.paidThisMonth, '↗', 'Contas, parcelas e abatimentos']
   ];
   $('#metrics').innerHTML = items.map(([label, value, icon, note]) => `<article class="metric-card"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon}</span></div><strong class="metric-value">${money(value)}</strong><div class="metric-note">${esc(note)}</div></article>`).join('');
   const debts = data.debts.filter(d => Number(d.balance) > 0).slice(0, 4);
   drawDebtTrend(data.debtTrend);
   $('#debtProgress').innerHTML = debts.length ? debts.map(debtProgressCard).join('') : empty('Cadastre uma dívida para acompanhar quanto falta quitar.');
-  const bills = data.bills.slice(0, 5);
-  $('#upcomingBills').innerHTML = bills.length ? bills.map(b => compactBill(b)).join('') : empty('Adicione uma conta recorrente para organizar o mês.');
+  const bills = data.bills.filter(bill => !bill.payment_id).slice(0, 5);
+  $('#upcomingBills').innerHTML = bills.length ? bills.map(compactBill).join('') : empty('Nenhuma conta em aberto neste mês.');
   $('#recentHistory').innerHTML = data.history.length ? data.history.slice(0, 4).map(compactHistory).join('') : empty('Os pagamentos e abatimentos aparecerão aqui.');
   drawIncomes(data.incomes); drawBills(data.bills); drawInstallments(data.installments); drawDebts(data.debts); drawHistory(data.history);
   drawReminders(data.bills);
 }
 function currentMonth() { return `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`; }
+function isOneTimeBill(bill) { return bill.recurring != null && Number(bill.recurring) === 0; }
+function billDueDate(bill) {
+  const period = isOneTimeBill(bill) && bill.started_month ? bill.started_month : selectedMonth;
+  const [year, month] = period.split('-').map(Number);
+  const lastDay = new Date(year, month, 0).getDate();
+  return new Date(year, month - 1, Math.min(Number(bill.due_day), lastDay));
+}
+function billDueLabel(bill) {
+  if (!isOneTimeBill(bill)) return `Vence dia ${bill.due_day}`;
+  return `Avulsa · vence em ${billDueDate(bill).toLocaleDateString('pt-BR')}`;
+}
 function dueReminders(bills) {
   const today = new Date(); today.setHours(0,0,0,0);
   if (selectedMonth !== currentMonth()) return [];
-  const lastDay = new Date(today.getFullYear(), today.getMonth()+1, 0).getDate();
   return bills.filter(bill => !bill.payment_id).map(bill => {
-    const dueDate = new Date(today.getFullYear(), today.getMonth(), Math.min(Number(bill.due_day), lastDay));
-    dueDate.setHours(0,0,0,0);
-    return { bill, days: Math.round((dueDate - today) / 86400000) };
+    return { bill, days: Math.round((billDueDate(bill) - today) / 86400000) };
   }).filter(item => item.days <= 7).sort((a,b) => a.days - b.days);
 }
 function drawReminders(bills) {
@@ -132,7 +146,7 @@ function drawDebtTrend(points) {
   host.innerHTML = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Evolução do saldo das dívidas nos últimos 12 meses"><defs><linearGradient id="trendFade" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#70e2bd" stop-opacity=".22"/><stop offset="1" stop-color="#70e2bd" stop-opacity="0"/></linearGradient></defs><line class="trend-grid" x1="${left}" x2="${width-right}" y1="${top}" y2="${top}"/><line class="trend-grid" x1="${left}" x2="${width-right}" y1="${height-bottom}" y2="${height-bottom}"/><path class="trend-fill" d="${area}"/><path class="trend-line" d="${line}"/>${points.map((point,index)=>`<circle class="trend-dot" cx="${x(index)}" cy="${y(point.balance)}" r="2.5"><title>${esc(monthLabel(point.month))}: ${money(point.balance)}</title></circle>`).join('')}<text class="trend-label" x="${left}" y="${height-4}">${esc(firstLabel)}</text><text class="trend-label" text-anchor="end" x="${width-right}" y="${height-4}">${esc(lastLabel)}</text></svg>`;
 }
 function compactBill(b) {
-  const description = b.name === b.category ? `Vence dia ${b.due_day}` : `${esc(b.category)} · vence dia ${b.due_day}`;
+  const description = b.name === b.category ? billDueLabel(b) : `${esc(b.category)} · ${billDueLabel(b)}`;
   return `<div class="compact-row"><span class="row-icon">${icons[b.category] || '✦'}</span><div class="row-copy"><div class="row-title">${esc(b.name)}</div><div class="row-sub">${description}</div></div><div class="row-right"><div class="row-amount">${money(b.expected_amount)}</div><div class="row-state ${b.payment_id ? 'paid' : ''}">${b.payment_id ? 'Paga' : 'Em aberto'}</div></div></div>`;
 }
 function compactHistory(h) {
@@ -144,7 +158,13 @@ function drawIncomes(rows) {
   $('#incomesList').innerHTML = rows.length ? rows.map(i => `<article class="record-card"><div class="record-main"><span class="record-icon">＋</span><div><div class="record-name">${esc(i.description)}</div><div class="record-detail">Recebido em ${fmtDate(i.received_on)}${i.note ? ` · ${esc(i.note)}` : ''}</div></div></div><div class="record-end"><span class="record-amount">${money(i.amount)}</span><div class="record-actions"><button class="small-button" data-edit-income="${i.id}">Editar</button><button class="small-button" data-delete-income="${i.id}">Excluir</button></div></div></article>`).join('') : empty('Nenhuma renda registrada para este mês.');
 }
 function drawBills(bills) {
-  $('#billsList').innerHTML = bills.length ? bills.map(b => `<article class="record-card"><div class="record-main"><span class="record-icon">${icons[b.category] || '✦'}</span><div><div class="record-name">${esc(b.name)}</div><div class="record-detail">${b.name !== b.category ? `${esc(b.category)} · ` : ''}vence todo dia ${b.due_day}${b.payment_id ? ` · pago em ${fmtDate(b.paid_on)}` : ''}</div></div></div><div class="record-end"><span class="record-amount">${money(b.payment_id ? b.paid_amount : b.expected_amount)}</span><div class="record-actions"><button class="small-button" data-pay-bill="${b.id}" ${b.payment_id ? 'disabled' : ''}>${b.payment_id ? '✓ Paga' : 'Pagar'}</button><button class="small-button" data-edit-bill="${b.id}">Editar</button><button class="small-button" data-delete-bill="${b.id}">Excluir</button></div></div></article>`).join('') : empty('Nenhuma conta cadastrada. Comece por água, luz, internet ou celular.');
+  const toggle = $('[data-toggle-paid-bills]');
+  const paidCount = bills.filter(bill => bill.payment_id).length;
+  toggle.hidden = paidCount === 0;
+  toggle.setAttribute('aria-pressed', String(showPaidBills));
+  toggle.textContent = showPaidBills ? 'Ocultar contas pagas' : `Mostrar contas pagas (${paidCount})`;
+  const visibleBills = showPaidBills ? bills : bills.filter(bill => !bill.payment_id);
+  $('#billsList').innerHTML = visibleBills.length ? visibleBills.map(b => `<article class="record-card"><div class="record-main"><span class="record-icon">${icons[b.category] || '✦'}</span><div><div class="record-name">${esc(b.name)}</div><div class="record-detail">${b.name !== b.category ? `${esc(b.category)} · ` : ''}${billDueLabel(b)}${b.payment_id ? ` · pago em ${fmtDate(b.paid_on)}` : ''}</div></div></div><div class="record-end"><span class="record-amount">${money(b.payment_id ? b.paid_amount : b.expected_amount)}</span><div class="record-actions"><button class="small-button" data-pay-bill="${b.id}" ${b.payment_id ? 'disabled' : ''}>${b.payment_id ? '✓ Paga' : 'Pagar'}</button><button class="small-button" data-edit-bill="${b.id}">Editar</button><button class="small-button" data-delete-bill="${b.id}">Excluir</button></div></div></article>`).join('') : empty('Nenhuma conta em aberto neste mês.');
 }
 function drawInstallments(rows) {
   $('#installmentsList').innerHTML = rows.length ? rows.map(i => {
@@ -153,15 +173,17 @@ function drawInstallments(rows) {
   }).join('') : empty('Nenhuma compra parcelada pendente neste mês.');
 }
 function drawDebts(debts) {
+  const openDebts = debts.filter(debt => Number(debt.balance) > 0);
   const total = debts.reduce((sum, d) => sum + Number(d.balance), 0);
   const original = debts.reduce((sum, d) => sum + Number(d.original_amount), 0);
   const paid = Math.max(0, original - total);
-  const summary = [['Saldo atual', total, '◉'], ['Valor inicial', original, '↗'], ['Já abatido', paid, '✓'], ['Dívidas abertas', debts.filter(d => Number(d.balance) > 0).length, '＋']];
+  const summary = [['Saldo atual', total, '◉'], ['Valor inicial', original, '↗'], ['Já abatido', paid, '✓'], ['Dívidas abertas', openDebts.length, '＋']];
   $('#debtSummary').innerHTML = summary.map(([label, value, icon]) => `<article class="metric-card"><div class="metric-top">${label}<span class="metric-icon">${icon}</span></div><strong class="metric-value">${label === 'Dívidas abertas' ? value : money(value)}</strong><div class="metric-note">${label === 'Já abatido' && original ? `${(100 * paid / original).toFixed(0)}% do valor inicial` : 'Somando seus registros'}</div></article>`).join('');
-  $('#debtsList').innerHTML = debts.length ? debts.map(d => {
+  $('#debtsList').innerHTML = openDebts.length ? openDebts.map(d => {
     const pct = Number(d.original_amount) ? Math.max(0, Math.min(100, (1 - Number(d.balance) / Number(d.original_amount)) * 100)) : 0;
-    return `<article class="record-card"><div class="record-main"><span class="record-icon">◉</span><div><div class="record-name">${esc(d.name)}</div><div class="record-detail">${esc(d.creditor || 'Credor não informado')} · ${pct.toFixed(0)}% quitado · inicial ${money(d.original_amount)}</div><div class="progress-mini"><i style="width:${pct}%"></i></div></div></div><div class="record-end"><span class="record-amount">${money(d.balance)}<div class="record-detail">saldo restante</div></span><div class="record-actions"><button class="small-button" data-pay-debt="${d.id}" ${Number(d.balance) <= 0 ? 'disabled' : ''}>${Number(d.balance) <= 0 ? '✓ Quitada' : 'Abater'}</button><button class="small-button" data-edit-debt="${d.id}">Editar</button><button class="small-button" data-delete-debt="${d.id}">Excluir</button></div></div></article>`;
-  }).join('') : empty('Adicione uma dívida ou empréstimo para começar a acompanhar a quitação.');
+    const monthly = Number(d.monthly_payment) > 0 ? `${money(d.monthly_payment)} por mês` : 'Pagamentos avulsos';
+    return `<article class="record-card"><div class="record-main"><span class="record-icon">◉</span><div><div class="record-name">${esc(d.name)}</div><div class="record-detail">${esc(d.creditor || 'Credor não informado')} · ${pct.toFixed(0)}% quitado · inicial ${money(d.original_amount)}</div><div class="record-detail">${monthly}</div><div class="progress-mini"><i style="width:${pct}%"></i></div></div></div><div class="record-end"><span class="record-amount">${money(d.balance)}<div class="record-detail">saldo restante</div></span><div class="record-actions"><button class="small-button" data-pay-debt="${d.id}">Abater</button><button class="small-button" data-edit-debt="${d.id}">Editar</button><button class="small-button" data-delete-debt="${d.id}">Excluir</button></div></div></article>`;
+  }).join('') : empty('Nenhuma dívida em aberto.');
 }
 function drawHistory(rows) {
   $('#historyList').innerHTML = rows.length ? rows.map(h => `<div class="history-row"><span class="row-icon">${h.kind === 'debt' ? '◉' : h.kind === 'bill' ? '▤' : h.kind === 'income' ? '＋' : '▦'}</span><div class="row-copy"><div class="row-title">${esc(h.label)}</div><div class="row-sub">${fmtDate(h.happened_on)} · ${monthLabel(h.period)}${h.note ? ` · ${esc(h.note)}` : ''}</div></div><div class="row-right"><div class="row-amount">${h.kind === 'income' ? '+' : '−'} ${money(h.amount)}</div>${h.kind === 'debt' ? `<div class="row-sub">restante ${money(h.remaining_after)}</div>` : ''}</div></div>`).join('') : empty('Nenhuma movimentação neste mês.');
@@ -183,12 +205,20 @@ function input(name, label, type = 'text', opts = {}) {
 }
 function openModal(type, record = null) {
   modal = { type, record };
-  const title = { income: record ? 'Editar renda' : 'Registrar renda', bill: record ? 'Editar conta' : 'Nova conta recorrente', installment: record ? 'Editar compra' : 'Nova compra parcelada', debt: record ? 'Editar dívida' : 'Adicionar dívida', payBill: `Pagar ${record?.name ?? ''}`, payInstallment: `Pagar parcela · ${record?.name ?? ''}`, payDebt: `Abater ${record?.name ?? ''}` }[type];
+  const title = { income: record ? 'Editar renda' : 'Registrar renda', bill: record ? 'Editar conta' : 'Nova conta', installment: record ? 'Editar compra' : 'Nova compra parcelada', debt: record ? 'Editar dívida' : 'Adicionar dívida', payBill: `Pagar ${record?.name ?? ''}`, payInstallment: `Pagar parcela · ${record?.name ?? ''}`, payDebt: `Abater ${record?.name ?? ''}` }[type];
   const r = record || {};
   $('#modalTitle').textContent = title;
   let fields = '';
   if (type === 'income') fields = input('description','Descrição','text',{value:r.description,placeholder:'Ex.: salário'}) + input('amount','Valor recebido','number',{min:'0.01',step:'0.01',value:r.amount,placeholder:'0,00'}) + input('received_on','Data do recebimento','date',{value:r.received_on || dateForSelectedMonth()}) + input('note','Observação (opcional)','text',{required:false,full:true,value:r.note});
-  if (type === 'bill') fields = input('category','Tipo de conta','select',{value:r.category || 'Água',options:['Água','Luz','Internet','Celular','Moradia','Transporte','Saúde','Educação','Cartão','Outros']}) + input('name','Identificação (opcional)','text',{required:false,value:r.name === r.category ? '' : r.name,placeholder:'Ex.: CPFL, se quiser diferenciar'}) + input('expected_amount','Valor previsto','number',{min:'0.01',step:'0.01',value:r.expected_amount,placeholder:'0,00'}) + input('due_day','Dia do vencimento','number',{min:'1',max:'31',value:r.due_day,placeholder:'10'}) + input('started_month','Começa em','month',{required:false,value:record ? r.started_month : selectedMonth,placeholder:'AAAA-MM'});
+  if (type === 'bill') {
+    fields = input('category','Tipo de conta','select',{value:r.category || 'Água',options:['Água','Luz','Internet','Celular','Moradia','Transporte','Saúde','Educação','Cartão','Outros']})
+      + input('name','Identificação (opcional)','text',{required:false,value:r.name === r.category ? '' : r.name,placeholder:'Ex.: CPFL, se quiser diferenciar'})
+      + input('expected_amount','Valor previsto','number',{min:'0.01',step:'0.01',value:r.expected_amount,placeholder:'0,00'})
+      + input('due_day','Dia do vencimento','number',{min:'1',max:'31',value:r.due_day,placeholder:'10'})
+      + input('frequency','Frequência','select',{value:isOneTimeBill(r) ? 'Uma vez' : 'Todo mês',options:['Todo mês','Uma vez']})
+      + input('started_month','Começa em','month',{required:false,value:record ? r.started_month : selectedMonth,placeholder:'AAAA-MM'})
+      + '<p class="form-help full">Uma conta mensal volta no mês seguinte. Uma conta avulsa fica em aberto até ser paga.</p>';
+  }
   if (type === 'installment') fields = input('name','Nome da compra','text',{value:r.name,placeholder:'Ex.: Geladeira'}) + input('store','Loja ou cartão (opcional)','text',{required:false,value:r.store}) + input('amount','Valor da parcela','number',{min:'0.01',step:'0.01',value:r.amount,placeholder:'0,00'}) + input('total','Número de parcelas','number',{min:'1',value:r.total,placeholder:'10'}) + input('paid','Parcelas já pagas','number',{min:'0',value:r.paid ?? 0}) + input('started_month','Começa em','month',{value:r.started_month || selectedMonth});
   if (type === 'debt') fields = input('name','Nome da dívida','text',{value:r.name,placeholder:'Ex.: Empréstimo pessoal'}) + input('creditor','Banco ou credor (opcional)','text',{required:false,value:r.creditor}) + input('original_amount','Valor original da dívida','number',{min:'0.01',step:'0.01',value:r.original_amount,placeholder:'30000,00'}) + input('balance','Saldo que falta pagar','number',{min:'0',step:'0.01',value:r.balance,placeholder:'30000,00'}) + `<p class="form-help full">O valor original fica registrado. Cada abatimento reduz o saldo, mesmo que os pagamentos tenham valores diferentes.</p>` + input('monthly_payment','Parcela mensal (opcional)','number',{required:false,min:'0',step:'0.01',value:r.monthly_payment,placeholder:'0,00'}) + input('due_day','Dia de vencimento (opcional)','number',{required:false,min:'1',max:'31',value:r.due_day}) + input('note','Anotação (opcional)','textarea',{required:false,full:true,value:r.note});
   if (type === 'payBill') fields = input('amount','Valor pago','number',{min:'0.01',step:'0.01',value:record.expected_amount}) + input('paid_on','Data do pagamento','date',{value:dateForSelectedMonth()}) + input('note','Observação (opcional)','text',{required:false,full:true});
@@ -217,6 +247,8 @@ async function submitRecord(values) {
   if (type === 'income') return api(record ? `/api/incomes/${record.id}` : '/api/incomes', { method:record ? 'PATCH' : 'POST', body:JSON.stringify(body) });
   if (type === 'bill') {
     body.name = String(body.name || '').trim() || body.category;
+    body.recurring = body.frequency === 'Uma vez' ? 0 : 1;
+    delete body.frequency;
     return api(record ? `/api/bills/${record.id}` : '/api/bills', { method:record ? 'PATCH' : 'POST', body:JSON.stringify(body) });
   }
   if (type === 'installment') return api(record ? `/api/installments/${record.id}` : '/api/installments', { method:record ? 'PATCH' : 'POST', body:JSON.stringify(body) });
@@ -229,6 +261,10 @@ async function submitRecord(values) {
 document.addEventListener('click', event => {
   const logout = event.target.closest('[data-logout]');
   if (logout) return logoutUser();
+  if (event.target.closest('[data-toggle-paid-bills]') && dashboard) {
+    showPaidBills = !showPaidBills;
+    return drawBills(dashboard.bills);
+  }
   const nav = event.target.closest('[data-page]'); if (nav) return setPage(nav.dataset.page);
   const open = event.target.closest('[data-open]'); if (open) return openModal(open.dataset.open);
   const reminderButton = event.target.closest('[data-enable-reminders]'); if (reminderButton) return enableReminders();
@@ -306,7 +342,7 @@ $('#recordForm').addEventListener('submit', async event => {
   catch (error) { showError(error.message); }
   finally { submit.disabled = false; }
 });
-$('#monthSelect').addEventListener('change', event => { selectedMonth = event.target.value; loadDashboard(); });
+$('#monthSelect').addEventListener('change', event => { selectedMonth = event.target.value; showPaidBills = false; loadDashboard(); });
 window.setInterval(() => { if (!document.hidden) loadDashboard(); }, 30 * 60 * 1000);
 $('#todayLabel').textContent = new Date().toLocaleDateString('pt-BR', { weekday:'long', day:'numeric', month:'long' }).toUpperCase();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('./sw.js').catch(() => {});

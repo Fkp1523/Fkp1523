@@ -7,7 +7,7 @@ const output = process.argv[2] && path.resolve(process.argv[2]);
 if (!output) throw new Error('Informe o diretório da versão para celular.');
 
 const assets = [
-  'app.js', 'local-store.js', 'style.css', 'auth.css', 'charts.css',
+  'app.js', 'monthly-budget.js', 'local-store.js', 'style.css', 'auth.css', 'charts.css',
   'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'
 ];
 fs.mkdirSync(output, { recursive: true });
