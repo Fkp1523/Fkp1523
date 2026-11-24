@@ -29,8 +29,13 @@ Sou um desenvolvedor focado em criar soluções eficientes e bem estruturadas. T
 ### 📁 Projetos em Destaque
 
 * **Projeto Teclado Interativo:** Aplicação desenvolvida para auxiliar novos alunos ao treinamento de acordes, campo Harmônico, graus e etc...  teclado, focada em interatividade e resposta a eventos do utilizador. Um excelente caso de uso para demonstrar o controlo do DOM e a aplicação de lógica de programação.
-  - 💻 [Ver o Código no GitHub](https://github.com/Fkp1523/estúdio-mestre-teclado)
+  - 💻 [Ver o Código no GitHub](https://github.com/Fkp1523/studio-master-teclado)
   - 🚀 [Aceder à Aplicação](https://studio-master-teclado.vercel.app)
+
+* **Meu Financeiro:** App responsivo em Node.js, JavaScript e MySQL para organizar renda, contas, compras parceladas e dívidas, com histórico, backup e suporte a PWA.
+  - 💻 [Ver o código](https://github.com/Fkp1523/Fkp1523/tree/main/meu-financeiro)
+  - 📱 [Configuração e instalação](https://github.com/Fkp1523/Fkp1523/blob/main/meu-financeiro/README.md)
+
 ---
 
 ### 📫 Como me encontrar

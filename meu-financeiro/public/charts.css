@@ -1,0 +1,4 @@
+.debt-trend{height:120px;margin:10px 0 16px}.debt-trend svg{width:100%;height:100%;overflow:visible}.trend-grid{stroke:#ffffff12;stroke-dasharray:3 5}.trend-fill{fill:url(#trendFade)}.trend-line{fill:none;stroke:var(--mint);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}.trend-dot{fill:var(--mint);stroke:#162335;stroke-width:2}.trend-label{fill:#8091a7;font:9px 'DM Sans',sans-serif}.trend-empty{height:100%;display:grid;place-items:center;color:#8293a8;font-size:10px;text-align:center}
+.record-actions{flex-wrap:wrap;justify-content:flex-end}
+.backup-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+@media(max-width:760px){.backup-actions{gap:5px}.backup-actions .button{font-size:9px;padding:8px}}
