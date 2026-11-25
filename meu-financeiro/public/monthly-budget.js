@@ -38,6 +38,7 @@ function calculateMonthlyBudget({ month, income, bills, installments, debts, pay
     debtPayments: (paid.debt + debtPending) / 100,
     debtTotal: sumCents(debts, 'balance') / 100,
     billTotal: (paid.bill + openBills) / 100,
+    paidInstallmentIds: [...installmentPayments],
     available: (cents(income) - paidThisMonth - remainingExpenses) / 100,
     paidThisMonth: paidThisMonth / 100,
     remainingExpenses: remainingExpenses / 100

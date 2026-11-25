@@ -51,5 +51,6 @@ Você pode copiar o arquivo por cabo USB. A importação substitui os registros 
 - Restaurar um backup com confirmação antes de substituir os registros atuais.
 - Avisar no painel quando contas estiverem vencidas ou vencerem nos próximos 7 dias; notificações do navegador são opcionais.
 - Mostrar quanto já saiu, quanto ainda está previsto e o saldo em vermelho quando essas despesas ultrapassam a renda.
+- Consultar os totais do mês e o saldo a quitar no fim das listas. Quando as pendências do período forem pagas, abrir o próximo mês pelo painel.
 
 Os lembretes aparecem no painel enquanto o app está aberto. No computador, o navegador também pode mostrar notificações se você ativá-las.

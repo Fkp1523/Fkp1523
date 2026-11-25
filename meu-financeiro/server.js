@@ -153,7 +153,7 @@ app.use('/api', asyncRoute(async (req, res, next) => {
 app.get('/api/health', asyncRoute(async (_req, res) => {
   await pool.query('SELECT 1');
   await ensureBillSchema();
-  res.json({ ok: true, database: 'connected', monthlyBudget: true });
+  res.json({ ok: true, database: 'connected', monthlyBudget: true, periodSummary: true });
 }));
 
 app.get('/api/dashboard', asyncRoute(async (req, res) => {

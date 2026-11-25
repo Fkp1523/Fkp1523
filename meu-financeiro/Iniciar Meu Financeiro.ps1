@@ -13,14 +13,15 @@ function Get-FinanceiroHealth {
 
 function Test-FinanceiroReady {
   $health = Get-FinanceiroHealth
-  return ($health.ok -and $health.database -eq 'connected' -and $health.monthlyBudget)
+  return ($health.ok -and $health.database -eq 'connected' -and $health.periodSummary)
 }
 
-$runningApp = Get-FinanceiroHealth
-if ($runningApp.ok -and $runningApp.database -eq 'connected' -and -not $runningApp.monthlyBudget) {
-  # Uma versão anterior pode continuar aberta no Windows durante a atualização.
-  $desktopPort = 3011
+foreach ($candidatePort in 3010..3012) {
+  # Durante uma atualização, uma instância antiga pode continuar aberta.
+  $desktopPort = $candidatePort
   $appUrl = "http://127.0.0.1:$desktopPort"
+  $runningApp = Get-FinanceiroHealth
+  if (-not $runningApp.ok -or $runningApp.periodSummary) { break }
 }
 
 if (-not (Test-FinanceiroReady)) {

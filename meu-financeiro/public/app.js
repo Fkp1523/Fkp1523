@@ -36,11 +36,12 @@ function chooseMonth(month) {
   showPaidBills = false;
   return loadDashboard();
 }
-function moveMonth(step) {
-  const [year, month] = selectedMonth.split('-').map(Number);
+function shiftedMonth(period, step) {
+  const [year, month] = period.split('-').map(Number);
   const date = new Date(year, month - 1 + step, 1);
-  return chooseMonth(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
+function moveMonth(step) { return chooseMonth(shiftedMonth(selectedMonth, step)); }
 function setPage(page) {
   const titles = { inicio: 'Visão geral', contas: 'Contas do mês', parcelas: 'Compras parceladas', dividas: 'Dívidas', historico: 'Histórico' };
   if (!titles[page]) return;
@@ -52,6 +53,13 @@ function setPage(page) {
 function drawDashboard(data) {
   $('#available').textContent = money(data.available);
   $('#incomeTotal').textContent = money(data.income);
+  const paidBills = data.billTotal - data.openBills;
+  const totalExpenses = data.billTotal + data.installmentTotal + data.debtPayments;
+  const totals = { billTotal: data.billTotal, openBills: data.openBills, paidBills,
+    debtTotal: data.debtTotal, debtPayments: data.debtPayments, totalExpenses };
+  $$('[data-total-amount]').forEach(element => {
+    element.textContent = money(totals[element.dataset.totalAmount]);
+  });
   const hint = $('.balance-hint');
   if (data.remainingExpenses != null) {
     hint.textContent = `Já pago ${money(data.paidThisMonth)} · Ainda previsto ${money(data.remainingExpenses)}`;
@@ -61,7 +69,7 @@ function drawDashboard(data) {
   $('#balanceStatus').textContent = negative ? 'As despesas passam da renda'
     : Number(data.available) === 0 ? 'A renda cobre as despesas sem sobra' : 'Saldo previsto positivo';
   const items = [
-    ['Contas em aberto', data.openBills, '▤', `${data.bills.filter(b => !b.payment_id).length} vencimento(s) pendente(s)`],
+    ['Contas do mês', data.billTotal, '▤', `${money(data.openBills)} em aberto`],
     ['Parcelas do mês', data.installmentTotal, '▦', 'Pagas e ainda previstas'],
     ['Total das dívidas', data.debtTotal, '◉', `${money(data.debtPayments)} em pagamentos deste mês`],
     ['Pago neste mês', data.paidThisMonth, '↗', 'Contas, parcelas e abatimentos']
@@ -73,8 +81,21 @@ function drawDashboard(data) {
   const bills = data.bills.filter(bill => !bill.payment_id).slice(0, 5);
   $('#upcomingBills').innerHTML = bills.length ? bills.map(compactBill).join('') : empty('Nenhuma conta em aberto neste mês.');
   $('#recentHistory').innerHTML = data.history.length ? data.history.slice(0, 4).map(compactHistory).join('') : empty('Os pagamentos e abatimentos aparecerão aqui.');
-  drawIncomes(data.incomes); drawBills(data.bills); drawInstallments(data.installments); drawDebts(data.debts); drawHistory(data.history);
+  const paidInstallments = new Set(data.paidInstallmentIds ?? []);
+  drawIncomes(data.incomes); drawBills(data.bills); drawInstallments(data.installments, paidInstallments); drawDebts(data.debts); drawHistory(data.history);
   drawReminders(data.bills);
+  drawMonthCompletion('#overviewMonthDone', data.month, data.paidThisMonth > 0 && data.remainingExpenses === 0, 'Mês encerrado', 'Todas as despesas previstas para o mês foram pagas.');
+  drawMonthCompletion('#billsMonthDone', data.month, paidBills > 0 && data.openBills === 0, 'Contas do mês pagas', 'Os pagamentos ficam no Histórico.');
+  drawMonthCompletion('#installmentsMonthDone', data.month, paidInstallments.size > 0 && data.installments.every(item => paidInstallments.has(String(item.id))), 'Parcelas do mês pagas', 'As parcelas seguintes aparecem nos próximos meses.');
+}
+function drawMonthCompletion(selector, month, completed, title, description) {
+  const panel = $(selector);
+  const next = shiftedMonth(month, 1);
+  panel.hidden = !completed || next.length !== 7;
+  if (panel.hidden) return;
+  panel.querySelector('strong').textContent = `${title} · ${monthLabel(month)}`;
+  panel.querySelector('p').textContent = description;
+  panel.querySelector('button').textContent = `Ir para ${monthLabel(next)}`;
 }
 function currentMonth() { return `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`; }
 function isOneTimeBill(bill) { return bill.recurring != null && Number(bill.recurring) === 0; }
@@ -173,10 +194,11 @@ function drawBills(bills) {
   const visibleBills = showPaidBills ? bills : bills.filter(bill => !bill.payment_id);
   $('#billsList').innerHTML = visibleBills.length ? visibleBills.map(b => `<article class="record-card"><div class="record-main"><span class="record-icon">${icons[b.category] || '✦'}</span><div><div class="record-name">${esc(b.name)}</div><div class="record-detail">${b.name !== b.category ? `${esc(b.category)} · ` : ''}${billDueLabel(b)}${b.payment_id ? ` · pago em ${fmtDate(b.paid_on)}` : ''}</div></div></div><div class="record-end"><span class="record-amount">${money(b.payment_id ? b.paid_amount : b.expected_amount)}</span><div class="record-actions"><button class="small-button" data-pay-bill="${b.id}" ${b.payment_id ? 'disabled' : ''}>${b.payment_id ? '✓ Paga' : 'Pagar'}</button><button class="small-button" data-edit-bill="${b.id}">Editar</button><button class="small-button" data-delete-bill="${b.id}">Excluir</button></div></div></article>`).join('') : empty('Nenhuma conta em aberto neste mês.');
 }
-function drawInstallments(rows) {
+function drawInstallments(rows, paidInstallments) {
   $('#installmentsList').innerHTML = rows.length ? rows.map(i => {
     const left = Number(i.total) - Number(i.paid), totalOwed = Number(i.amount) * left, pct = Number(i.total) ? (Number(i.paid) / Number(i.total)) * 100 : 0;
-    return `<article class="record-card"><div class="record-main"><span class="record-icon">▦</span><div><div class="record-name">${esc(i.name)}</div><div class="record-detail">${esc(i.store || 'Compra')} · ${i.paid}/${i.total} parcelas pagas · faltam ${left}</div><div class="progress-mini"><i style="width:${pct}%"></i></div></div></div><div class="record-end"><span class="record-amount">${money(totalOwed)}<div class="record-detail">restante</div></span><div class="record-actions"><button class="small-button" data-pay-installment="${i.id}">Pagar</button><button class="small-button" data-edit-installment="${i.id}">Editar</button><button class="small-button" data-delete-installment="${i.id}">Excluir</button></div></div></article>`;
+    const paidThisMonth = paidInstallments.has(String(i.id));
+    return `<article class="record-card"><div class="record-main"><span class="record-icon">▦</span><div><div class="record-name">${esc(i.name)}</div><div class="record-detail">${esc(i.store || 'Compra')} · ${i.paid}/${i.total} parcelas pagas · faltam ${left}</div><div class="progress-mini"><i style="width:${pct}%"></i></div></div></div><div class="record-end"><span class="record-amount">${money(totalOwed)}<div class="record-detail">restante da compra</div></span><div class="record-actions"><button class="small-button" data-pay-installment="${i.id}" ${paidThisMonth ? 'disabled' : ''}>${paidThisMonth ? '✓ Paga neste mês' : 'Pagar'}</button><button class="small-button" data-edit-installment="${i.id}">Editar</button><button class="small-button" data-delete-installment="${i.id}">Excluir</button></div></div></article>`;
   }).join('') : empty('Nenhuma compra parcelada pendente neste mês.');
 }
 function drawDebts(debts) {

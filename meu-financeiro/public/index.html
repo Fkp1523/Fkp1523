@@ -41,15 +41,61 @@
       <section id="reminderPanel" class="reminder-panel" aria-live="polite" hidden><div class="reminder-heading"><div><span class="eyebrow">LEMBRETES</span><h2 id="reminderTitle">Contas próximas do vencimento</h2></div><button class="button quiet reminder-enable" data-enable-reminders>Ativar notificações</button></div><div id="reminderList" class="reminder-list"></div><p class="reminder-note">As notificações aparecem enquanto o app estiver aberto neste aparelho. O aviso dentro do app fica sempre disponível.</p></section>
       <section class="page active" id="page-inicio">
         <div class="welcome-row"><div><h2>Seu dinheiro, com mais clareza.</h2><p>Um retrato simples do que entra, sai e ainda falta.</p></div><button class="button primary" data-open="income"><span>＋</span> Registrar renda</button></div>
-        <article class="balance-card"><div class="balance-orb orb-one"></div><div class="balance-orb orb-two"></div><div class="balance-inner"><div class="balance-top"><div><div class="balance-label">DISPONÍVEL PREVISTO</div><div class="balance-hint">Renda menos contas e pagamentos previstos</div></div><span class="balance-mark">✳</span></div><div class="balance-value" id="available">R$ 0,00</div><div class="balance-bottom"><span class="balance-status" id="balanceStatus">Conectando ao banco...</span><span class="balance-income">Renda no mês <b id="incomeTotal">R$ 0,00</b></span></div></div></article>
+        <article class="balance-card">
+          <div class="balance-orb orb-one"></div><div class="balance-orb orb-two"></div>
+          <div class="balance-inner">
+            <div class="balance-top"><div><div class="balance-label">DISPONÍVEL PREVISTO</div><div class="balance-hint">Renda menos contas e pagamentos previstos</div></div><span class="balance-mark">✳</span></div>
+            <div class="balance-value" id="available">R$ 0,00</div>
+            <div class="balance-bottom">
+              <span class="balance-status" id="balanceStatus">Conectando ao banco...</span>
+              <div class="balance-month-totals">
+                <span class="balance-income">Renda no mês <b id="incomeTotal">R$ 0,00</b></span>
+                <span class="balance-income">Despesas do mês <b data-total-amount="totalExpenses">R$ 0,00</b></span>
+              </div>
+            </div>
+          </div>
+        </article>
         <div class="metric-grid" id="metrics"></div>
+        <div class="month-completion" id="overviewMonthDone" hidden>
+          <div><strong></strong><p></p></div><button class="button primary" type="button" data-month-step="1">Próximo mês</button>
+        </div>
         <div class="dashboard-grid"><article class="surface debt-overview"><div class="surface-heading"><div><span class="eyebrow">VISÃO DE LONGO PRAZO</span><h3>Suas dívidas</h3><p>Saldo restante nos últimos 12 meses.</p></div><button class="link-button" data-page="dividas">Abrir dívidas <span>↗</span></button></div><div id="debtTrend" class="debt-trend"></div><div id="debtProgress" class="debt-progress"></div></article>
           <article class="surface month-list"><div class="surface-heading"><div><span class="eyebrow">PRÓXIMOS PASSOS</span><h3>Contas deste mês</h3><p>Vencimentos e pagamentos fixos.</p></div><button class="link-button" data-page="contas">Ver todas <span>↗</span></button></div><div id="upcomingBills" class="compact-list"></div></article></div>
         <article class="surface recent-surface"><div class="surface-heading"><div><span class="eyebrow">MOVIMENTAÇÕES</span><h3>Atividade recente</h3></div><button class="link-button" data-page="historico">Ver histórico <span>↗</span></button></div><div id="recentHistory" class="compact-list"></div></article>
       </section>
-      <section class="page" id="page-contas"><div class="page-heading"><div><span class="eyebrow">ROTINA</span><h2>Contas do mês</h2><p>Contas mensais e despesas avulsas.</p></div><button class="button primary" data-open="bill">＋ Nova conta</button></div><button class="small-button bill-filter" type="button" data-toggle-paid-bills aria-pressed="false" hidden>Mostrar contas pagas</button><div id="billsList" class="record-list"></div></section>
-      <section class="page" id="page-parcelas"><div class="page-heading"><div><span class="eyebrow">COMPRAS</span><h2>Compras parceladas</h2><p>Saiba quantas parcelas faltam e o valor que ainda está comprometido.</p></div><button class="button primary" data-open="installment">＋ Nova compra</button></div><div id="installmentsList" class="record-list"></div></section>
-      <section class="page" id="page-dividas"><div class="page-heading"><div><span class="eyebrow">PLANO DE QUITAÇÃO</span><h2>Dívidas</h2><p>Registre abatimentos e acompanhe o saldo até quitar.</p></div><button class="button primary" data-open="debt">＋ Nova dívida</button></div><div id="debtSummary" class="metric-grid"></div><div id="debtsList" class="record-list"></div></section>
+      <section class="page" id="page-contas">
+        <div class="page-heading"><div><span class="eyebrow">ROTINA</span><h2>Contas do mês</h2><p>Contas mensais e despesas avulsas.</p></div><button class="button primary" data-open="bill">＋ Nova conta</button></div>
+        <button class="small-button bill-filter" type="button" data-toggle-paid-bills aria-pressed="false" hidden>Mostrar contas pagas</button>
+        <div id="billsList" class="record-list"></div>
+        <section class="surface list-total" aria-labelledby="billTotalTitle">
+          <div class="list-total-heading"><h3 id="billTotalTitle">Total das contas do mês</h3><strong data-total-amount="billTotal">R$ 0,00</strong></div>
+          <dl class="list-total-detail">
+            <div><dt>Em aberto</dt><dd data-total-amount="openBills">R$ 0,00</dd></div>
+            <div><dt>Pagas</dt><dd data-total-amount="paidBills">R$ 0,00</dd></div>
+          </dl>
+        </section>
+        <div class="month-completion" id="billsMonthDone" hidden>
+          <div><strong></strong><p></p></div><button class="button primary" type="button" data-month-step="1">Próximo mês</button>
+        </div>
+      </section>
+      <section class="page" id="page-parcelas">
+        <div class="page-heading"><div><span class="eyebrow">COMPRAS</span><h2>Compras parceladas</h2><p>Saiba quantas parcelas faltam e o valor que ainda está comprometido.</p></div><button class="button primary" data-open="installment">＋ Nova compra</button></div>
+        <div id="installmentsList" class="record-list"></div>
+        <div class="month-completion" id="installmentsMonthDone" hidden>
+          <div><strong></strong><p></p></div><button class="button primary" type="button" data-month-step="1">Próximo mês</button>
+        </div>
+      </section>
+      <section class="page" id="page-dividas">
+        <div class="page-heading"><div><span class="eyebrow">PLANO DE QUITAÇÃO</span><h2>Dívidas</h2><p>Registre abatimentos e acompanhe o saldo até quitar.</p></div><button class="button primary" data-open="debt">＋ Nova dívida</button></div>
+        <div id="debtSummary" class="metric-grid"></div>
+        <div id="debtsList" class="record-list"></div>
+        <section class="surface list-total" aria-labelledby="debtTotalTitle">
+          <div class="list-total-heading"><h3 id="debtTotalTitle">Total que falta quitar</h3><strong data-total-amount="debtTotal">R$ 0,00</strong></div>
+          <dl class="list-total-detail">
+            <div><dt>Pagamentos registrados e previstos no mês</dt><dd data-total-amount="debtPayments">R$ 0,00</dd></div>
+          </dl>
+        </section>
+      </section>
       <section class="page" id="page-historico"><div class="page-heading"><div><span class="eyebrow">SEU CAMINHO</span><h2>Histórico</h2><p>Rendas recebidas, pagamentos e abatimentos registrados.</p></div><div class="backup-actions"><button class="button quiet" data-backup>↓ Baixar backup</button><button class="button quiet" data-restore>↑ Restaurar backup</button><input id="restoreFile" type="file" accept="application/json" hidden></div></div><p class="backup-note">Guarde o arquivo baixado em um lugar seguro. Restaurar substitui os registros atuais.</p><div class="surface"><div class="surface-heading"><div><h3>Rendas do mês</h3></div></div><div id="incomesList" class="record-list"></div></div><div id="historyList" class="surface history-list" style="margin-top:12px"></div></section>
       <footer class="main-foot">Seus dados são seus. Faça cópias de segurança regularmente.</footer>
     </main>
